@@ -1,7 +1,7 @@
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.FileWriter;
-import java.io.IOException;
+import com.sun.jdi.event.BreakpointEvent;
+import org.apache.commons.lang3.SerializationUtils;
+
+import java.io.*;
 import java.util.*;
 
 public class Solver {
@@ -34,23 +34,24 @@ public class Solver {
     private static final int r = 100; // радиус
     private static final int h = 100; // высота
     private static final double rho = 7900.0; // плотность
-    private static final double lamda = 1.0; // параметр Ляме
-    private static final double mu = 7.89e+10; // модуль сдвига (Тоже параметр Ляме)
+    private static final double lamda = 0.792e-2; // параметр Ляме
+    private static final double mu = 4.251e-3; // модуль сдвига (Тоже параметр Ляме)
     private static final double v_medium = 1.0; // скорость звука в среде
-    private static final double y_0 = 245e+4; // предел текучести
+    private static final double y_0 = 1.3194e-7; // предел текучести
+    private static final double k_k = lamda +2.0*mu/3.0; // модуль объемного сжатия
 
     /** ------------ Параметры удара --------------*/
     private static final int r_0 = 4;
-    private static final double v_0 = -500.0;
+    private static final double v_0 = -0.2;
 
     /** ------------ Параметры солверов --------------*/
     private static final double viscosity_coff = 0.5;
-    private static final double timestep = 0.6666666666e-7;
+    private static final double timestep = 0.6666666666e-2;
     private static final double CFL = 0.5;
-    private static final int x_count = 11;
-    private static final int y_count = 22;
-    private static final double l_x = 0.1;
-    private static final double l_y = 0.1;
+    private static final int x_count = 10;
+    private static final int y_count = 10;
+    private static final double l_x = 1;
+    private static final double l_y = 1;
 
 //    private static double node[] = new double[x_res];
 //    private static double cell[] = new double[x_res];
@@ -62,24 +63,29 @@ public class Solver {
     private static Cell[][] cells = new Cell[x_count][y_count];
     private static Cell[][] oldCells = new Cell[x_count][y_count];
 
-    public Solver() throws WrongAccesException, WrongSpeedException, IOException {
+    private static boolean printer = true;
+
+    public Solver() throws WrongAccesException, WrongSpeedException, IOException, CloneNotSupportedException {
         System.out.println(ANSI_RED+"-------Solver started--------"+ANSI_RESET);
 
         System.out.println(ANSI_RED2+"======== Prepare step started ========"+ANSI_RESET);
         startPrepStep();
 
         System.out.println(ANSI_RED2+"======== Solver step started ========"+ANSI_RESET);
-        startSolveStep();
+        for(int i = 0; i<50; i++) {
+            startSolveStep(i);
+        }
     }
 
-    public static void main(String[] args) throws WrongAccesException, WrongSpeedException, IOException {
+    public static void main(String[] args) throws WrongAccesException, WrongSpeedException, IOException, CloneNotSupportedException {
+//        System.out.println(Math.log10(23)/Math.log10(Math.exp(1)));
         new Solver();
     }
 
-    private void writeToFile() throws IOException {
-        File myObj = new File("./pts.txt");
-        File myObj1 = new File("./prims.txt");
-        FileWriter myWriter = new FileWriter("./pts.txt");
+    private void writeToFile(int step) throws IOException {
+//        File myObj = new File("../output/pts" + (step+1) + ".txt");
+//        File myObj1 = new File("../output/pts" + (step+1) + ".txt");
+        FileWriter myWriter = new FileWriter("./output/pts" + (step+1) + ".txt");
         StringBuilder f = new StringBuilder();
         f.append(x_count).append("_").append(y_count).append("\n");
         for(int k=0; k<x_count; k++)//проходим все слои, выставляя координаты(прямоугольная недеформированная сетка), скорость ставим ноль, записываем номер
@@ -91,13 +97,13 @@ public class Solver {
         myWriter.write(f.toString());
         myWriter.close();
 
-        myWriter = new FileWriter("./prims.txt");
+        myWriter = new FileWriter("./output/prims" + (step+1) + ".txt");
         f = new StringBuilder();
 //        f.append(x_count).append("_").append(y_count).append("\n");
         for(int k=0; k<x_count; k++)//проходим все слои, выставляя координаты(прямоугольная недеформированная сетка), скорость ставим ноль, записываем номер
         {
             for (int j = 0; j < y_count; j++) {
-                f.append("prim_").append(Arrays.toString(cells[k][j].getStress())).append("\n");
+                f.append("prim_").append(Arrays.toString(cells[k][j].getStress())).append("_pressure_").append(cells[k][j].getPressure()).append("\n");
             }
         }
         myWriter.write(f.toString());
@@ -183,7 +189,7 @@ public class Solver {
 
         System.out.println(ANSI_GREEN+"---->> OK"+ANSI_RESET);
 
-        printFields(false, false, true, false, false);
+        printFields(false, false, true, false, false, false);
 
         /**
          *Задаем скорости в момент соприкосновения
@@ -202,7 +208,7 @@ public class Solver {
         /**
          *Создаем ячейки
          */
-        double mass = (2.0/3.0)*rho*Math.PI;
+        double mass = (2.0/3.0)*rho;
         for(int k=0; k<x_count; k++)//проходим все слои, выставляя координаты(прямоугольная недеформированная сетка), скорость ставим ноль, записываем номер
         {
             for(int j=0; j<y_count; j++)
@@ -224,6 +230,10 @@ public class Solver {
                     cells[k][j].setFlag(2);
                     oldCells[k][j].setFlag(2);
                 }
+
+                if(cells[k][j].getDensity() == 0){
+                    System.out.println("erf");
+                }
             }
         }
 
@@ -235,23 +245,26 @@ public class Solver {
         }
     }
 
-    private void startSolveStep() throws WrongAccesException, WrongSpeedException, IOException {
+    private void startSolveStep(int iii) throws WrongAccesException, WrongSpeedException, IOException, CloneNotSupportedException {
         System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"+ANSI_RESET);
         System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~ Initial valuse: ~~~~~~~~~~~~~~~~~~"+ANSI_RESET);
         System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"+ANSI_RESET);
-        printFields(true, true, false, false, false);
+        printFields(true, true, false, false, false, true);
 
         copyTimeStep();
 
         double phi;
         double alpha;
         double betta;
+        //TODO - alpha checker
+        final boolean checkAlpha = false;
+//        printFields(true, true, false, false, false, true);
 
         System.out.println(ANSI_BLUE+"\n\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"+ANSI_RESET);
-        System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~ 1-st step valuse: ~~~~~~~~~~~~~~~~~~"+ANSI_RESET);
+        System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~ " + iii+"-st step valuse: ~~~~~~~~~~~~~~~~~~"+ANSI_RESET);
         System.out.println(ANSI_BLUE+"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"+ANSI_RESET);
 
-        printFields(false, false, false, false, true);
+        printFields(false, false, false, false, true, false);
 
         for(int k=1; k < x_count; k++) {
             for (int j = 1; j < y_count; j++) {
@@ -268,6 +281,14 @@ public class Solver {
                             oldCells[k - 1][j - 1].getArea() * oldCells[k - 1][j - 1].getStress()[2] / oldCells[k - 1][j - 1].getMass() +
                                     oldCells[k][j - 1].getArea() * oldCells[k][j - 1].getStress()[2] / oldCells[k][j - 1].getMass()
                     );
+
+                    if (alpha != 0 && iii == 0) {
+                        System.out.println(oldCells[k - 1][j - 1].getArea() +" _-_ " + oldCells[k - 1][j - 1].getStress()[2]  +" _-_ " +  oldCells[k - 1][j - 1].getMass());
+                        System.out.println(cells[k - 1][j - 1].getArea() +" _-_ " + cells[k - 1][j - 1].getStress()[2]  +" _-_ " +  cells[k - 1][j - 1].getMass());
+//                        System.out.println(oldCells[k][j - 1].getArea() +" _-_ " + oldCells[k][j - 1].getStress()[2]  +" _-_ " +  oldCells[k][j - 1].getMass());
+
+                        throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()) + "__"+oldCells[k][j].getStress()[2]);
+                    }
 
                     betta = 0.5 * (
                             oldCells[k - 1][j - 1].getArea() * (oldCells[k - 1][j - 1].getStress()[1] - oldCells[k - 1][j - 1].getStress()[3]) / oldCells[k - 1][j - 1].getMass() +
@@ -314,6 +335,10 @@ public class Solver {
                         System.out.println(oldCells[k][j - 1].getMass());
                         System.out.println(k + "  " + (j - 1));
                         throw new WrongSpeedException();
+                    }
+
+                    if (alpha != 0 && checkAlpha) {
+                        throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()) + "__"+oldCells[k - 1][j].getStress()[2]);
                     }
 
                     betta = 0.5 * (
@@ -390,8 +415,9 @@ public class Solver {
                         throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()));
                     }
 
-                    if (alpha != 0) {
-                        throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()));
+                    if (alpha != 0 && checkAlpha) {
+                        System.out.println(oldCells[k - 1][j].getStress()[2]);
+                        throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()) + "__"+oldCells[k - 1][j].getStress()[2] + "_-"+k+"-"+j+"-_");
                     }
 
                     double xv = oldNodes[k][j].getV()[0] - (timestep / (2 * phi)) * (
@@ -449,6 +475,41 @@ public class Solver {
                     nodes[k][j].setCoords(oldNodes[k][j].getCoords()[0] + xv * timestep, oldNodes[k][j].getCoords()[1] + yv * timestep);
                     nodes[k][j].setColor(nodes[k][j].getColor() + "\u001b[4m");
 
+                } else if(nodes[k][j].getFlag() == 8) {
+                    phi = 0.25 * (
+                            oldCells[k][j].getArea() * oldCells[k][j].getDensity() / oldCells[k][j].getRelDensity() +
+                                    oldCells[k][j - 1].getArea() * oldCells[k][j - 1].getDensity() / oldCells[k][j - 1].getRelDensity()
+                    );
+
+                    alpha = 0;
+
+                    if (Double.isNaN(alpha)) {
+                        System.out.println("ERROR!!!!!!!1");
+                        System.out.println(oldCells[k][j - 1].getArea());
+                        System.out.println(oldCells[k][j - 1].getStress()[2]);
+                        System.out.println(oldCells[k][j - 1].getMass());
+                        System.out.println(k + "  " + (j - 1));
+                        throw new WrongSpeedException(String.valueOf(oldCells[k][j].getFlag()));
+                    }
+
+                    betta = 0.25 * (
+                            oldCells[k][j].getArea() * (oldCells[k][j].getStress()[1] - oldCells[k][j].getStress()[3]) / oldCells[k][j].getMass() +
+                                    oldCells[k][j - 1].getArea() * (oldCells[k][j - 1].getStress()[1] - oldCells[k][j - 1].getStress()[3]) / oldCells[k][j - 1].getMass()
+                    );
+
+                    double xv = 0;
+
+                    double yv = oldNodes[k][j].getV()[1] + (timestep / (2 * phi)) * (
+                            (oldCells[k][j].getStress()[1] - oldCells[k][j-1].getStress()[1])*oldNodes[k+1][j].getCoords()[0] -
+                            (oldCells[k][j].getStress()[2])*(oldNodes[k+1][j].getCoords()[1] - oldNodes[k][j+1].getCoords()[1]) -
+                            (oldCells[k][j-1].getStress()[2])*(oldNodes[k][j-1].getCoords()[1] - oldNodes[k+1][j].getCoords()[1])
+                            ) +
+                            timestep * betta;
+
+                    nodes[k][j].setV(xv, yv);
+                    nodes[k][j].setCoords(oldNodes[k][j].getCoords()[0] + xv * timestep, oldNodes[k][j].getCoords()[1] + yv * timestep);
+                    nodes[k][j].setColor(nodes[k][j].getColor() + "\u001b[4m");
+
                 } else {
                     phi = 0.25 * (
                             oldCells[k][j].getArea() * oldCells[k][j].getDensity() / oldCells[k][j].getRelDensity() +
@@ -502,75 +563,151 @@ public class Solver {
                             oldCells[k][j - 1].getStress()[2] * (oldNodes[k][j - 1].getCoords()[0] - oldNodes[k + 1][j].getCoords()[0])) +
                             timestep * betta;
                     nodes[k][j].setV(xv, yv);
+                    nodes[k][j].setTmpVar(xv);
                     nodes[k][j].setCoords(oldNodes[k][j].getCoords()[0] + xv * timestep, oldNodes[k][j].getCoords()[1] + yv * timestep);
                     nodes[k][j].setColor(nodes[k][j].getColor() + "\u001b[4m");
 
                 }
-
-                if (k < x_count - 1 && j < y_count - 1) {
-                    /**
-                     * Deformation part
-                     */
-
-                    double A_a = (nodes[k + 1][j].getCoords()[0] * (nodes[k + 1][j + 1].getCoords()[1] - nodes[k][j + 1].getCoords()[1]) +
-                            nodes[k + 1][j + 1].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
-                            nodes[k][j + 1].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k + 1][j + 1].getCoords()[1])) * 0.5;
-
-                    double A_b = (nodes[k + 1][j].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k][j].getCoords()[1]) +
-                            nodes[k][j + 1].getCoords()[0] * (nodes[k][j].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
-                            nodes[k][j].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k][j + 1].getCoords()[1])) * 0.5;
-
-                    double V_tmp = (nodes[k + 1][j].getCoords()[1] + nodes[k + 1][j + 1].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
-                            A_a + (nodes[k + 1][j].getCoords()[1] + nodes[k][j].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
-                            A_b;
-
-                    cells[k][j].setArea(A_a + A_b);
-                    cells[k][j].setDensity((3.0 * oldCells[k][j].getMass()) / (2.0 * V_tmp));
-
-                    double hlafstepA = (oldCells[k][j].getArea() + A_a + A_b) * 0.5;
-                    double defXX = op1(0, k, j) / (2.0 * hlafstepA);
-                    double defYY = op1(3, k, j) / (2.0 * hlafstepA);
-
-                    double defTT = (cells[k][j].getRelDensity() - oldCells[k][j].getRelDensity()) / ((cells[k][j].getRelDensity() + oldCells[k][j].getRelDensity()) * 0.5 * timestep) - (defXX + defYY);
-
-                    double defXY = (op1(1, k, j) + op1(2, k, j)) / (2.0 * hlafstepA);
-
-                    defTT *= timestep;
-                    defXY *= timestep;
-                    defXX *= timestep;
-                    defYY *= timestep;
-
-                    double tmpVar = 2 * ((cells[k][j].getRelDensity() - oldCells[k][j].getRelDensity()) / (3.0 * (cells[k][j].getRelDensity() + oldCells[k][j].getRelDensity())));
-
-                    cells[k][j].setDev(0,
-                            oldCells[k][j].getDev()[0] + 2.0 * mu * (defXX - tmpVar)
-                    );
-
-                    cells[k][j].setDev(1,
-                            oldCells[k][j].getDev()[1] + 2.0 * mu * (defYY - tmpVar)
-                    );
-
-                    cells[k][j].setDev(3,
-                            oldCells[k][j].getDev()[3] + 2.0 * mu * (defTT - tmpVar)
-                    );
-
-                    cells[k][j].setStress(2, oldCells[k][j].getStress()[2] + mu * defXY);
-
-                    double fnext = 2*Math.pow(cells[k][j].getStress()[2], 2) + Math.pow(cells[k][j].getDev()[1], 2) + Math.pow(cells[k][j].getDev()[3], 2) + Math.pow(cells[k][j].getDev()[0], 2);
-
-                    if(fnext > Math.pow(y_0, 2)*2.0/3.0){
-                        double mul = y_0*(Math.sqrt(2.0/3.0)*fnext);
-                        cells[k][j].setStress(2, cells[k][j].getStress()[2]*mul);
-                        cells[k][j].setDev(0, cells[k][j].getDev()[0]*mul);
-                        cells[k][j].setDev(1, cells[k][j].getDev()[1]*mul);
-                        cells[k][j].setDev(3, cells[k][j].getDev()[3]*mul);
-                    }
-                    cells[k][j].setStress(0,cells[k][j].getDev()[0] + cells[k][j].getPressure());
-                    cells[k][j].setStress(1,cells[k][j].getDev()[1] + cells[k][j].getPressure());
-                    cells[k][j].setStress(3,cells[k][j].getDev()[3] + cells[k][j].getPressure());
-                }
             }
         }
+
+        for(int k=1; k < x_count-1; k++) {
+            for (int j = 1; j < y_count-1; j++) {
+                /**
+                 * Deformation part
+                 */
+
+                    double A_a = 0.5 * Math.abs((nodes[k][j + 1].getCoords()[0] - nodes[k + 1][j + 1].getCoords()[0]) * (nodes[k + 1][j].getCoords()[1] - nodes[k + 1][j + 1].getCoords()[1]) -
+                            (nodes[k + 1][j].getCoords()[0] - nodes[k + 1][j + 1].getCoords()[0]) * (nodes[k][j + 1].getCoords()[1] - nodes[k + 1][j + 1].getCoords()[1]));
+
+                    double A_b = 0.5 * Math.abs((nodes[k][j + 1].getCoords()[0] - nodes[k + 1][j].getCoords()[0]) * (nodes[k][j].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) -
+                            (nodes[k][j].getCoords()[0] - nodes[k + 1][j].getCoords()[0]) * (nodes[k][j + 1].getCoords()[1] - nodes[k + 1][j].getCoords()[1]));
+
+
+    //                    double A_a = (nodes[k + 1][j].getCoords()[0] * (nodes[k + 1][j + 1].getCoords()[1] - nodes[k][j + 1].getCoords()[1]) +
+    //                            nodes[k + 1][j + 1].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
+    //                            nodes[k][j + 1].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k + 1][j + 1].getCoords()[1])) * 0.5;
+    //
+    //                    double A_b = (nodes[k + 1][j].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k][j].getCoords()[1]) +
+//                            nodes[k][j + 1].getCoords()[0] * (nodes[k][j].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
+//                            nodes[k][j].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k][j + 1].getCoords()[1])) * 0.5;
+
+                double V_tmp = (nodes[k + 1][j].getCoords()[1] + nodes[k + 1][j + 1].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
+                        A_a + (nodes[k + 1][j].getCoords()[1] + nodes[k][j].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
+                        A_b;
+
+                cells[k][j].setTmpVar(V_tmp);
+
+//                    System.out.println(V_tmp);
+
+                cells[k][j].setArea(A_a + A_b);
+                cells[k][j].setDensity((3.0 * oldCells[k][j].getMass()) / (2.0 * V_tmp));
+                //x = 2.0/3.0 * rho * V_tmp
+                // rho = x*3/(2*V_tmp)
+//                if(k>2) {
+//                    if (cells[k][j].getDensity() != oldCells[k][j].getDensity()){
+//                        System.out.println(V_tmp);
+//                        System.out.println(oldCells[k][j].getTmpVar());
+//                        System.out.println(cells[k][j].getMass());
+//                        System.out.println(oldCells[k][j].getMass());
+//                        System.out.println(rho);
+//                        System.out.println(cells[k][j].getDensity());
+//                        System.out.println(oldCells[k][j].getTmpVar());
+//                    }
+//                }
+                double hlafstepA = (oldCells[k][j].getArea() + A_a + A_b) * 0.5;
+                double defXX = op1(0, k, j) / (2.0 * hlafstepA);
+                double defYY = op1(3, k, j) / (2.0 * hlafstepA);
+
+                double defTT = (cells[k][j].getRelDensity() - oldCells[k][j].getRelDensity()) / ((cells[k][j].getRelDensity() + oldCells[k][j].getRelDensity()) * 0.5 * timestep) - (defXX + defYY);
+
+                double defXY = (op1(1, k, j) + op1(2, k, j)) / (2.0 * hlafstepA);
+
+                defTT *= timestep;
+                defXY *= timestep;
+                defXX *= timestep;
+                defYY *= timestep;
+
+                double tmpVar = 2 * ((cells[k][j].getRelDensity() - oldCells[k][j].getRelDensity()) / (3.0 * (cells[k][j].getRelDensity() + oldCells[k][j].getRelDensity())));
+
+                if (defTT > 2 || defXX > 2 || defYY > 2 || tmpVar > 2) {
+                    System.out.println(defTT);
+                    System.out.println(defXX);
+                    System.out.println(defXY);
+                    System.out.println(defYY);
+                    System.out.println(tmpVar);
+                }
+
+                cells[k][j].setDev(0,
+                        oldCells[k][j].getDev()[0] + 2.0 * mu * (defXX - tmpVar)
+                );
+                if (cells[k][j].getStress()[0] > 2) {
+                    System.out.println(defXX);
+                    System.out.println(tmpVar);
+                    System.out.println(oldCells[k][j].getDev()[0]);
+                }
+                cells[k][j].setDev(1,
+                        oldCells[k][j].getDev()[1] + 2.0 * mu * (defYY - tmpVar)
+                );
+
+                cells[k][j].setDev(3,
+                        oldCells[k][j].getDev()[3] + 2.0 * mu * (defTT - tmpVar)
+                );
+
+                cells[k][j].setStress(2, oldCells[k][j].getStress()[2] + mu * defXY);
+
+                double fnext = 2 * Math.pow(cells[k][j].getStress()[2], 2) + Math.pow(cells[k][j].getDev()[1], 2) + Math.pow(cells[k][j].getDev()[3], 2) + Math.pow(cells[k][j].getDev()[0], 2);
+
+                if (fnext > 1e3) {
+                    System.out.println(fnext);
+                    System.out.println(cells[k][j].getDev()[3]);
+                    System.out.println(oldCells[k][j].getDev()[3]);
+                    System.out.println(mu);
+                    System.out.println(defTT - tmpVar);
+
+                    System.out.println(fnext);
+                }
+
+                if (fnext > Math.pow(y_0, 2) * 2.0 / 3.0) {
+                    double mul = y_0 * (Math.sqrt(2.0 / 3.0) * fnext);
+                    cells[k][j].setStress(2, cells[k][j].getStress()[2] * mul);
+                    cells[k][j].setDev(0, cells[k][j].getDev()[0] * mul);
+                    cells[k][j].setDev(1, cells[k][j].getDev()[1] * mul);
+                    cells[k][j].setDev(3, cells[k][j].getDev()[3] * mul);
+                }
+                cells[k][j].setStress(0, cells[k][j].getDev()[0] + cells[k][j].getPressure());
+                cells[k][j].setStress(1, cells[k][j].getDev()[1] + cells[k][j].getPressure());
+                cells[k][j].setStress(3, cells[k][j].getDev()[3] + cells[k][j].getPressure());
+            }
+        }
+
+//        for(int k=1; k < x_count; k++) {
+//            for (int j = 1; j < y_count; j++) {
+//                if (cells[k][j].getArea() != oldCells[k][j].getArea() && k != 1 && k != 2 && j > 3) {
+//                    System.out.println("area diff: " + (cells[k][j].getArea() - oldCells[k][j].getArea()));
+//                    System.out.println("coords: " + nodes[k][j].getCoords()[0]+" __ " + nodes[k][j].getCoords()[1]);
+//                    System.out.println(nodes[k+1][j].getCoords()[0]+" __ " + nodes[k+1][j].getCoords()[1]);
+//                    System.out.println(nodes[k+1][j+1].getCoords()[0]+" __ " + nodes[k+1][j+1].getCoords()[1]);
+//                    System.out.println(nodes[k][j+1].getCoords()[0]+" __ " + nodes[k][j+1].getCoords()[1]);
+//                    System.out.println("old coords: " + oldNodes[k][j].getCoords()[0]+" __ " + oldNodes[k][j].getCoords()[1]);
+//                    System.out.println(oldNodes[k+1][j].getCoords()[0]+" __ " + oldNodes[k+1][j].getCoords()[1]);
+//                    System.out.println(oldNodes[k+1][j+1].getCoords()[0]+" __ " + oldNodes[k+1][j+1].getCoords()[1]);
+//                    System.out.println(oldNodes[k][j+1].getCoords()[0]+" __ " + oldNodes[k][j+1].getCoords()[1]);
+//
+//                    System.out.println("diff dx: " + (nodes[k][j].getTmpVar() - nodes[k + 1][j].getTmpVar()) * timestep);
+//                    System.out.println("dx k: " + (nodes[k][j].getTmpVar()) * timestep);
+//                    System.out.println("dx k+1: " + (nodes[k + 1][j].getTmpVar()) * timestep);
+//                    System.out.println("curr x diff: " + (nodes[k][j].getCoords()[0] - nodes[k + 1][j].getCoords()[0]));
+//                    System.out.println("old x diff: " + (oldNodes[k][j].getCoords()[0] - oldNodes[k + 1][j].getCoords()[0]));
+//                    System.out.println("curr y diff: " + (nodes[k][j].getCoords()[1] - nodes[k + 1][j].getCoords()[1]));
+//                    System.out.println("old y diff: " + (oldNodes[k][j].getCoords()[1] - oldNodes[k + 1][j].getCoords()[1]));
+//                    System.out.println(cells[k][j].getFlag());
+//                    System.out.println("V_tmp: " + (cells[k][j].getTmpVar() - oldCells[k][j].getTmpVar()));
+////                    printFields(true, true, false, false, false, false);
+//                    System.out.println("qwd");
+//                }
+//            }
+//        }
 
         /**
          * Check if V at img and hard surfaces is not 0
@@ -581,66 +718,9 @@ public class Solver {
                 throw new WrongSpeedException("Speed: " + Arrays.toString(nodes[1][i].getvV()) + " Num: " + Arrays.toString(nodes[1][i].getNum()));
             }
         }
-
-        for(int i = 0; i<x_count; i++){
-            if(nodes[i][1].getvV()[1] != 0.0){
-                throw new WrongSpeedException("Speed: " + Arrays.toString(nodes[i][1].getvV()) + " Num: " + Arrays.toString(nodes[i][1].getNum()));
-            }
-        }
-
-//        y_dot_next[j][k]=y_dot_curr[j][k] + (dt/(2*phi[j][k]))*(sigma_yy[j][k]*(x[j+1][k]-x[j][k+1]) +
-//                sigma_yy[j-1][k]*(x[j][k+1]-x[j-1][k])+
-//                sigma_yy[j-1][k-1]*(x[j-1][k]-x[j][k-1])+
-//                sigma_yy[j][k-1]*(x[j][k-1]-x[j+1][k])-
-//
-//                sigma_xy[j][k]*(y[j+1][k]-y[j][k+1])-
-//                sigma_xy[j-1][k]*(y[j][k+1]-y[j-1][k])-
-//                sigma_xy[j-1][k-1]*(y[j-1][k]-y[j][k-1])-
-//                sigma_xy[j][k-1]*(y[j][k-1]-y[j+1][k]))+dt*betta[j][k];
-
-//        x_dot_next[j][k]=x_dot_curr[j][k] - (dt/(2*phi[j][k]))*(sigma_xx[j][k]*(y[j+1][k]-y[j][k+1]) +
-//                sigma_xx[j-1][k]*(y[j][k+1]-y[j-1][k])+
-//                sigma_xx[j-1][k-1]*(y[j-1][k]-y[j][k-1])+
-//                sigma_xx[j][k-1]*(y[j][k-1]-y[j+1][k])-
-//                sigma_xy[j][k]*(x[j+1][k]-x[j][k+1])-
-//                sigma_xy[j-1][k]*(x[j][k+1]-x[j-1][k])-
-//                sigma_xy[j-1][k-1]*(x[j-1][k]-x[j][k-1])-
-//                sigma_xy[j][k-1]*(x[j][k-1]-x[j+1][k]))+dt*alpha[j][k];
-
-//        betta[j][k] = 0.25*((sigma_yy[j][k]- sigma_zz[j][k])*A[j][k]/mass[j][k] +
-//                (sigma_yy[j-1][k]- sigma_zz[j-1][k])*A[j-1][k]/mass[j-1][k] +
-//                (sigma_yy[j-1][k-1]- sigma_zz[j-1][k-1])*A[j-1][k-1]/mass[j-1][k-1] +
-//                (sigma_yy[j][k-1]- sigma_zz[j][k-1])*A[j][k-1]/mass[j][k-1]);
-
-//        alpha[j][k] = 0.25*(sigma_xy[j][k]*A[j][k]/mass[j][k] +
-//                sigma_xy[j-1][k]*A[j-1][k]/mass[j-1][k] +
-//                sigma_xy[j-1][k-1]*A[j-1][k-1]/mass[j-1][k-1] +
-//                sigma_xy[j][k-1]*A[j][k-1]/mass[j][k-1]);
-
-//        phi[j][k]=0.25*(A[j][k]*density_0[j][k]/v_curr[j][k] +
-//                A[j-1][k]*density_0[j-1][k]/v_curr[j-1][k] +
-//                A[j-1][k-1]*density_0[j-1][k-1]/v_curr[j-1][k-1]+
-//                A[j][k-1]*density_0[j][k-1]/v_curr[j][k-1]);
-
-//        /**
-//         * =*=*=*=*=*=*=_ Усредняем скорости _=*=*=*=*=*=*=
 //         * TODO: Учесть шаг во времени, граничные условия
-//         */
-//        System.out.println(ANSI_RED+"---->> Bluring veclocity field"+ANSI_RESET);
-//
-//        for(int i = 1; i < x_count-1; i++){
-//            for(int j = 1; j < y_count-1; j++){
-//
-//                double[][] mm = maxAndMin(nodes[i][j], true);
-//
-//                double newVx = nodes[i][j].getV()[0]*(1-viscosity_coff) + viscosity_coff*0.5*(mm[0][0] + mm[1][0]);
-//                double newVy = nodes[i][j].getV()[1]*(1-viscosity_coff) + viscosity_coff*0.5*(mm[0][1] + mm[1][1]);
-//                nodes[i][j].setV(newVx, newVy);
-//            }
-//        }
-//        System.out.println(ANSI_GREEN+"---->> OK"+ANSI_RESET);
-        printFields(true, true, false, true, false);
-        writeToFile();
+        printFields(true, true, false, true, false, true);
+        writeToFile(iii);
     }
 
     private double op1(int switcher, int numX, int numY) throws WrongAccesException {
@@ -671,32 +751,37 @@ public class Solver {
         }
     }
 
-    private void copyTimeStep() throws WrongAccesException {
+    private void copyTimeStep() throws WrongAccesException, CloneNotSupportedException {
         for(Node[] a: nodes){
             for(Node b:a){
-                oldNodes[b.getNum()[0]][b.getNum()[1]].setV(b.getvV());
+                oldNodes[b.getNum()[0]][b.getNum()[1]] = ((Node) SerializationUtils.clone(b));
+            }
+        }
+        for(Cell[] a: cells){
+            for(Cell b: a){
+                oldCells[b.getNum()[0]][b.getNum()[1]] = SerializationUtils.clone(b);
             }
         }
     }
 
     private void setAreaAndMass(int k, int j, double mass) throws WrongAccesException {
         if(k<x_count-1 && j<y_count-1) {
-            double A_a = (nodes[k + 1][j].getCoords()[0] * (nodes[k + 1][j + 1].getCoords()[1] - nodes[k][j + 1].getCoords()[1]) +
-                    nodes[k + 1][j + 1].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
-                    nodes[k][j + 1].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k + 1][j + 1].getCoords()[1])) * 0.5;
+            double A_a = 0.5 * Math.abs((nodes[k][j+1].getCoords()[0] - nodes[k+1][j+1].getCoords()[0])*(nodes[k+1][j].getCoords()[1] - nodes[k+1][j+1].getCoords()[1]) -
+                    (nodes[k+1][j].getCoords()[0] - nodes[k+1][j+1].getCoords()[0])*(nodes[k][j+1].getCoords()[1] - nodes[k+1][j+1].getCoords()[1]));
 
-            double A_b = (nodes[k + 1][j].getCoords()[0] * (nodes[k][j + 1].getCoords()[1] - nodes[k][j].getCoords()[1]) +
-                    nodes[k][j + 1].getCoords()[0] * (nodes[k][j].getCoords()[1] - nodes[k + 1][j].getCoords()[1]) +
-                    nodes[k][j].getCoords()[0] * (nodes[k + 1][j].getCoords()[1] - nodes[k][j + 1].getCoords()[1])) * 0.5;
+            double A_b = 0.5 * Math.abs((nodes[k][j+1].getCoords()[0] - nodes[k+1][j].getCoords()[0])*(nodes[k][j].getCoords()[1] - nodes[k+1][j].getCoords()[1]) -
+                    (nodes[k][j].getCoords()[0] - nodes[k+1][j].getCoords()[0])*(nodes[k][j+1].getCoords()[1] - nodes[k+1][j].getCoords()[1]));
 
             double V_tmp = (nodes[k + 1][j].getCoords()[1] + nodes[k + 1][j + 1].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
                     A_a + (nodes[k + 1][j].getCoords()[1] + nodes[k][j].getCoords()[1] + nodes[k][j + 1].getCoords()[1]) *
                     A_b;
 
             cells[k][j].setArea(A_a+A_b);
+            cells[k][j].setTmpVar(V_tmp);
             oldCells[k][j].setArea(A_a+A_b);
+            oldCells[k][j].setTmpVar(V_tmp);
 
-            mass *= V_tmp;
+            mass *= V_tmp; // 2.0/3.0 * rho * V_tmp
         } else {
             mass = 0;
         }
@@ -773,133 +858,376 @@ public class Solver {
         return new double[][]{{maxX, maxY},{minX, minY}};
     }
 
-    private void printFields(boolean vel, boolean coords, boolean flags, boolean cellFlags, boolean mass) throws WrongAccesException {
-        if(vel) {
-            System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-# Velocity Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+    private void printFields(boolean vel, boolean coords, boolean flags, boolean cellFlags, boolean mass, boolean stress) throws WrongAccesException {
+        if(printer) {
+            if (vel) {
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-# Velocity Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
 
-            for (int i = y_count - 1; i >= 0; i--) {
-                StringBuilder pr = new StringBuilder();
-                for (int j = 0; j < x_count; j++) {
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
 
-                    pr.append(nodes[j][i].getColor());
-                    pr.append(nodes[j][i].getBgcolor());
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
 
-                    pr.append("{").append(nodes[j][i].getvV()[0] < 0 ? "" : "+");
-                    pr.append(String.format("%.5f", nodes[j][i].getvV()[0]));
-                    pr.append(" || ");
-                    pr.append(nodes[j][i].getvV()[1] < 0 ? "" : "+");
-                    pr.append(String.format("%.5f", nodes[j][i].getvV()[1]));
-                    pr.append("}");
+                        pr.append("{").append(nodes[j][i].getvV()[0] < 0 ? "" : "+");
+                        pr.append(String.format("%.34f", nodes[j][i].getvV()[0]));
+                        pr.append(" || ");
+                        pr.append(nodes[j][i].getvV()[1] < 0 ? "" : "+");
+                        pr.append(String.format("%.34f", nodes[j][i].getvV()[1]));
+                        pr.append("}");
 
 //                    if (j != 0 && i != 0) {
                         pr.append(ANSI_RESET);
 //                    }
 
-                    pr.append("  ");
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
                 }
-                System.out.println(pr.toString());
+
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(oldNodes[j][i].getvV()[0] < 0 ? "" : "+");
+                        pr.append(String.format("%.34f", oldNodes[j][i].getvV()[0]));
+                        pr.append(" || ");
+                        pr.append(oldNodes[j][i].getvV()[1] < 0 ? "" : "+");
+                        pr.append(String.format("%.34f", oldNodes[j][i].getvV()[1]));
+                        pr.append("}");
+
+//                    if (j != 0 && i != 0) {
+                        pr.append(ANSI_RESET);
+//                    }
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-# dvx Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_YELLOW + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(nodes[j][i].getvV()[0] < 0 ? "" : "+");
+                        pr.append(String.format("%.34f", nodes[j][i].getTmpVar()));
+                        pr.append("}");
+
+//                    if (j != 0 && i != 0) {
+                        pr.append(ANSI_RESET);
+//                    }
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
             }
-        }
-        System.out.println("\n\n");
-        if(coords) {
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Coords Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+            System.out.println("\n\n");
+            if (coords) {
 
-            for (int i = y_count - 1; i >= 0; i--) {
-                StringBuilder pr = new StringBuilder();
-                for (int j = 0; j < x_count; j++) {
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Pressure Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# old -> new #-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
 
-                    pr.append(nodes[j][i].getColor());
-                    pr.append(nodes[j][i].getBgcolor());
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
 
-                    pr.append("{").append(nodes[j][i].getvCoords()[0] < 0 ? "" : "+");
-                    pr.append(String.format("%.5f", nodes[j][i].getvCoords()[0]));
-                    pr.append(" || ");
-                    pr.append(nodes[j][i].getvCoords()[1] < 0 ? "" : "+");
-                    pr.append(String.format("%.5f", nodes[j][i].getvCoords()[1]));
-                    pr.append("}");
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(oldCells[j][i].getPressure() < 0 ? "" : "+");
+                        pr.append(String.format("%.12f", oldCells[j][i].getPressure()));
+                        pr.append("}");
 
                         pr.append(ANSI_RESET);
 
-                    pr.append("  ");
-                }
-                System.out.println(pr.toString());
-            }
-        }
-
-        if(flags) {
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Flags Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-
-            for (int i = y_count - 1; i >= 0; i--) {
-                StringBuilder pr = new StringBuilder();
-                for (int j = 0; j < x_count; j++) {
-
-                    pr.append(nodes[j][i].getBgcolor()).append(ANSI_BLACK);
-
-                    pr.append("{");
-                    pr.append(nodes[j][i].getFlag());
-                    pr.append("}");
-
-                    pr.append(ANSI_RESET);
-
-                    pr.append("  ");
-                }
-                System.out.println(pr.toString());
-            }
-        }
-
-        if(cellFlags) {
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Cell Flags Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-
-            for (int i = y_count - 1; i >= 0; i--) {
-                StringBuilder pr = new StringBuilder();
-                for (int j = 0; j < x_count; j++) {
-
-                    if (cells[j][i].getFlag() == 0) {
-                        pr.append(ANSI_POS_BACKGROUND);
+                        pr.append("  ");
                     }
-
-                    pr.append("{");
-                    pr.append(cells[j][i].getFlag());
-                    pr.append("}");
-
-                    pr.append(ANSI_RESET);
-
-                    pr.append("  ");
+                    System.out.println(pr.toString());
                 }
-                System.out.println(pr.toString());
-            }
-        }
 
-        if(mass) {
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Mass Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
-            System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
 
-            for (int i = y_count - 1; i >= 0; i--) {
-                StringBuilder pr = new StringBuilder();
-                for (int j = 0; j < x_count; j++) {
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
 
-                    if (cells[j][i].getFlag() == 0) {
-                        pr.append(ANSI_POS_BACKGROUND);
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(cells[j][i].getPressure() < 0 ? "" : "+");
+                        pr.append(String.format("%.12f", cells[j][i].getPressure()));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
                     }
-
-                    pr.append("{");
-                    pr.append(String.format("%.5f",cells[j][i].getMass()));
-                    pr.append("}");
-
-                    pr.append(ANSI_RESET);
-
-                    pr.append("  ");
+                    System.out.println(pr.toString());
                 }
-                System.out.println(pr.toString());
+
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Tmp Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# old -> new #-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(oldCells[j][i].getTmpVar() < 0 ? "" : "+");
+                        pr.append(String.format("%.12f", oldCells[j][i].getTmpVar()));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(cells[j][i].getTmpVar() < 0 ? "" : "+");
+                        pr.append(String.format("%.12f", cells[j][i].getTmpVar()));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Coords Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# new -> old #-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getColor());
+                        pr.append(nodes[j][i].getBgcolor());
+
+                        pr.append("{").append(nodes[j][i].getvCoords()[0] < 0 ? "" : "+");
+                        pr.append(String.format("%.16f", nodes[j][i].getvCoords()[0]));
+                        pr.append(" || ");
+                        pr.append(nodes[j][i].getvCoords()[1] < 0 ? "" : "+");
+                        pr.append(String.format("%.16f", nodes[j][i].getvCoords()[1]));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(oldNodes[j][i].getColor());
+                        pr.append(oldNodes[j][i].getBgcolor());
+
+                        pr.append("{").append(oldNodes[j][i].getvCoords()[0] < 0 ? "" : "+");
+                        pr.append(String.format("%.16f", oldNodes[j][i].getvCoords()[0]));
+                        pr.append(" || ");
+                        pr.append(oldNodes[j][i].getvCoords()[1] < 0 ? "" : "+");
+                        pr.append(String.format("%.16f", oldNodes[j][i].getvCoords()[1]));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+            }
+
+            if (flags) {
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Flags Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        pr.append(nodes[j][i].getBgcolor()).append(ANSI_BLACK);
+
+                        pr.append("{");
+                        pr.append(nodes[j][i].getFlag());
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+            }
+
+            if (cellFlags) {
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Cell Flags Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        if (cells[j][i].getFlag() == 0) {
+                            pr.append(ANSI_POS_BACKGROUND);
+                        }
+
+                        pr.append("{");
+                        pr.append(cells[j][i].getFlag());
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+            }
+
+            if (mass) {
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Mass Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        if (cells[j][i].getFlag() == 0) {
+                            pr.append(ANSI_POS_BACKGROUND);
+                        }
+
+                        pr.append("{");
+                        pr.append(String.format("%.5f", cells[j][i].getMass()));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+            }
+
+            if (stress) {
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Stress Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        if (cells[j][i].getFlag() == 0) {
+                            pr.append(ANSI_POS_BACKGROUND);
+                        }
+
+                        pr.append("{");
+                        pr.append(String.format("%.5f", cells[j][i].getStress()[0]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.5f", cells[j][i].getStress()[1]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.5f", cells[j][i].getStress()[2]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.5f", cells[j][i].getStress()[3]));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Pressure Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        if (cells[j][i].getFlag() == 0) {
+                            pr.append(ANSI_POS_BACKGROUND);
+                        }
+
+                        pr.append("{");
+                        pr.append(String.format("%.9f", cells[j][i].getPressure()));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
+
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-# Div Field: #-#-#-#-#-#-#-#-#" + ANSI_RESET);
+                System.out.println(ANSI_GREEN + "#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#-#" + ANSI_RESET);
+
+                for (int i = y_count - 1; i >= 0; i--) {
+                    StringBuilder pr = new StringBuilder();
+                    for (int j = 0; j < x_count; j++) {
+
+                        if (cells[j][i].getFlag() == 0) {
+                            pr.append(ANSI_POS_BACKGROUND);
+                        }
+
+                        pr.append("{");
+                        pr.append(String.format("%.15f", cells[j][i].getDev()[0]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.15f", cells[j][i].getDev()[1]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.15f", cells[j][i].getDev()[2]));
+                        pr.append(" | ");
+                        pr.append(String.format("%.15f", cells[j][i].getDev()[3]));
+                        pr.append("}");
+
+                        pr.append(ANSI_RESET);
+
+                        pr.append("  ");
+                    }
+                    System.out.println(pr.toString());
+                }
             }
         }
     }
@@ -908,11 +1236,12 @@ public class Solver {
 
     }
 
-    private static class Cell {
+    private static class Cell implements  Serializable{
         private double mass;
         private final int[] num;
         private double density = rho;
         private double area = 0;
+        private double tmpVar = 0;
         /**
          *  flags: 0 - принадлежит телу, 1 - мнимая, 2 - отраженная, 3 4 5 6 - углы, 7 8 9 10 - стенки
          *
@@ -962,29 +1291,45 @@ public class Solver {
 
         void setFlag(int flag) {
             this.flag = flag;
-            if(flag == 1){
-                this.density = 0;
-                this.mass = 0;
-            } else if(flag == 3){
+            if(flag == 3){
                 this.area = 0;
                 this.stress = new double[] {0,0,0,0};
-                this.area = 0;
-                this.area = 0;
             }
         }
 
         public double getPressure(){
-            return (dev_stress[0]+ dev_stress[1]+ dev_stress[2])/3.0;
+//            System.out.println("reld: " + getRelDensity());
+//            System.out.println("log: " + (-k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1))));
+//            if(k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1)) > 1e30){
+//                System.out.println(k_k);
+//                System.out.println(getRelDensity());
+//                System.out.println(rho);
+//                System.out.println(density);
+//                System.out.println(k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1)));
+//            }
+//            if(getRelDensity() !=1 && num[0] > 2){
+//                System.out.println(num);
+//                System.out.println(getRelDensity());
+//                System.out.println(-k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1)));
+//                System.out.println(-k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1)));
+//            }
+            return -k_k*Math.log10(getRelDensity())/Math.log10(Math.exp(1));
+        }
+
+        public double getRelDensity(){
+            return rho/this.density;
         }
 
         public void setDensity(double density) {
             if(this.flag != 1) {
                 this.density = density;
+            }else {
+                this.density = rho;
             }
         }
 
         public double getDensity() {
-            return density;
+            return this.density;
         }
 
         public void setDev(int component, double val) {
@@ -1005,12 +1350,12 @@ public class Solver {
                 t[1] *= -1;
                 t[2] *= -1;
                 t[3] = stress[3];
-                if(t[1] != 0){
-                    System.out.println("!! ACHTUNG !! Non-Zero stress yy value at cell " + num[0]);
-                }
-                if(t[3] != 0){
-                    System.out.println("!! ACHTUNG !! Non-Zero stress tt value at cell " + num[0]);
-                }
+//                if(t[1] != 0){
+//                    System.out.println("!! ACHTUNG !! Non-Zero stress yy value at cell " + num[0] + Arrays.toString(t));
+//                }
+//                if(t[3] != 0){
+//                    System.out.println("!! ACHTUNG !! Non-Zero stress tt value at cell " + num[0] + Arrays.toString(t));
+//                }
                 return t;
             } else if(num[0] == 0){
                 double[] t = oldCells[num[0]+1][num[1]].getStress();
@@ -1021,6 +1366,10 @@ public class Solver {
             } else {
                 return stress;
             }
+        }
+
+        public double getTmpVar(){
+            return this.tmpVar;
         }
 
         public int[] getNum() {
@@ -1040,18 +1389,19 @@ public class Solver {
             this.area = area;
         }
 
-        public double getRelDensity(){
-            return rho/this.density;
+        public void setTmpVar(double var){
+            this.tmpVar = var;
         }
     }
 
-    private static class Node {
+    private static class Node implements Serializable {
         private String color = ANSI_BLACK;;
         private String bgcolor = ANSI_CYAN_BACKGROUND;
         private double[] coords;
         private double[] v;
         private final int[] num;
         private int flag = 0;
+        private double tmpv = 0;
 //        double phi;
 //        double alpha;
 //        double beta;
@@ -1066,11 +1416,22 @@ public class Solver {
         }
 
         void setV(double vx, double vy) {
+            if(getNum()[0] == 1 ){
+                this.v = new double[] {0, vy};
+            }
             this.v = new double[] {vx, vy};
         }
 
         void setV(double[] xy) {
             this.v = xy;
+        }
+
+        public void setTmpVar(double var){
+            this.tmpv = var;
+        }
+
+        public double getTmpVar(){
+            return this.tmpv;
         }
 
         void setCoords(double x, double y) {
