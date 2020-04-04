@@ -1,3 +1,8 @@
 # Project exclude paths
 /out/
 /output/
+/vasian_dip_vis/houdini/cache/
+/vasian_dip_vis/houdini/hip/backup/
+/vasian_dip_vis/houdini/m_render/
+/vasian_dip_vis/houdini/s_render/
+/vasian_dip_vis/houdini/c_render/
